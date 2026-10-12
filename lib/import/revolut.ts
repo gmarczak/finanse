@@ -14,20 +14,39 @@ export function isRevolut(header: string[]): boolean {
   return REVOLUT_HEADER.every((h) => header.includes(h));
 }
 
-function hintOf(type: string, description: string, amount: number): RowHint {
+export function revolutHint(type: string, description: string, amount: number): RowHint {
   const t = type.toUpperCase();
-  const d = description.toLowerCase();
-  // „To/From PLN Savings account” — przelew między rachunkiem a oszczędnościami w Revolucie
-  const own = d.match(/^(to|from) [a-z]{3} (savings|current) account/);
+  const d = description.trim();
+  const lower = d.toLowerCase();
+  // Przelewy między rachunkiem a oszczędnościami: „To/From PLN Savings account”, „Depositing savings”,
+  // a wypłaty z oszczędności Revolut opisuje też jako „Unknown Description”
+  const own = lower.match(/^(to|from) [a-z]{3} (savings|current) account/);
   if (own) return { type: "own-transfer", product: own[2] === "savings" ? "savings" : "current", direction: own[1] === "from" ? "in" : "out" };
-  if (/(^|\W)(www\.)?xtb\.com/.test(d)) return { type: "broker", broker: "xtb" };
-  if (t === "ATM") return { type: "atm" };
+  if (lower === "depositing savings") return { type: "own-transfer", product: "savings", direction: "out" };
+  if (t === "TRANSFER" && lower === "unknown description" && amount > 0) return { type: "own-transfer", product: "savings", direction: "in" };
+  if (/(^|\W)(www\.)?xtb\.com/.test(lower)) return { type: "broker", broker: "xtb" };
+  if (t === "EXCHANGE") return { type: "exchange" };
+  if (t === "ATM" || t === "OTP_ATM") return { type: "atm" };
   if (t === "TOPUP") return { type: "topup" };
   if (t === "CARD REFUND" || t === "REFUND") return { type: "refund" };
-  if (t === "FEE") return { type: "fee" };
+  if (t === "CHARGE" || t === "FEE") return { type: "fee" };
   if (t === "CARD PAYMENT") return { type: "card" };
-  if (t === "OTP_PAYMENT" || t === "PAYMENT" || t === "TRANSFER") return { type: amount < 0 ? "payment" : "other" };
+  if (t === "TRANSFER") {
+    if (lower === "to investment account") return { type: "counterparty", name: "Konto inwestycyjne Revolut" };
+    // „To Jan Kowalski”, „Transfer to JAN KOWALSKI”, „Transfer from JAN KOWALSKI”
+    const person = d.match(/^(?:transfer )?(?:to|from) (.+)$/i);
+    if (person) return { type: "counterparty", name: titleCase(person[1]!.trim()) };
+  }
+  if (t === "OTP_PAYMENT" || t === "PAYMENT" || t === "REV PAYMENT" || t === "TRANSFER") return { type: amount < 0 ? "payment" : "other" };
   return { type: "other" };
+}
+
+function titleCase(name: string): string {
+  return name
+    .toLowerCase()
+    .split(/\s+/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
 }
 
 export function parseRevolut(text: string, baseCurrency = "PLN"): ParsedStatement {
@@ -36,6 +55,7 @@ export function parseRevolut(text: string, baseCurrency = "PLN"): ParsedStatemen
   const rows: StatementRow[] = [];
   let skippedPending = 0;
   let skippedOtherCurrency = 0;
+  let closingBalance: ParsedStatement["closingBalance"] = null;
 
   for (const r of records) {
     const state = (r["State"] ?? "").toUpperCase();
@@ -54,6 +74,12 @@ export function parseRevolut(text: string, baseCurrency = "PLN"): ParsedStatemen
     const amount = parseAmount(r["Amount"] ?? "");
     const fee = parseAmount(r["Fee"] || "0") ?? 0;
     if (!isLocalDate(bookedOn) || amount === null) throw new Error(`Nie rozumiem wiersza z ${started || "?"}: ${r["Description"] ?? ""}`);
+
+    // Saldo po ostatniej zaksięgowanej operacji (wiersze są w kolejności zaksięgowania)
+    const balance = parseAmount(r["Balance"] ?? "");
+    const completed = (r["Completed Date"] ?? "").slice(0, 10);
+    if (balance !== null && isLocalDate(completed) && (!closingBalance || completed >= closingBalance.on)) closingBalance = { minor: balance, on: completed };
+
     const net = amount - Math.abs(fee);
     if (net === 0) continue;
     const description = r["Description"] ?? "";
@@ -66,8 +92,8 @@ export function parseRevolut(text: string, baseCurrency = "PLN"): ParsedStatemen
       // Moment rozpoczęcia + kwota + opis: ten sam wiersz w kolejnym wyciągu da ten sam odcisk
       fingerprint: `revolut:${product}:${started}:${amount}:${shortHash(description)}`,
       status: "completed",
-      hint: hintOf(r["Type"] ?? "", description, net),
+      hint: revolutHint(r["Type"] ?? "", description, net),
     });
   }
-  return { format: "revolut", label: "Revolut", rows, skippedPending, skippedOtherCurrency };
+  return { format: "revolut", label: "Revolut", rows, skippedPending, skippedOtherCurrency, closingBalance, accountKind: "bank" };
 }

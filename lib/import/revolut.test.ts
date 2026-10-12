@@ -75,7 +75,7 @@ describe("kategorie", () => {
 describe("plan importu", () => {
   let n = 0;
   const newId = () => `id-${++n}`;
-  const choices: ImportChoices = { accountId: "rev", savingsAccountId: "sav", brokerAccountIds: { xtb: "xtb" }, topupFrom: "pekao", rejectedMerges: [] };
+  const choices: ImportChoices = { accountId: "rev", ownAccountId: "sav", counterparties: {}, includeExchange: false, brokerAccountIds: { xtb: "xtb" }, topupFrom: "pekao", rejectedMerges: [] };
   const manual: Transaction = {
     id: "m1", accountId: "rev", bookedOn: "2026-04-02", kind: "expense", amountMinor: -3000, currency: "PLN", amountPlnMinor: -3000,
     categoryId: "fun", description: "Kino z Olą", bankDescription: null, note: null, source: "manual", transferId: null, fingerprint: null, createdAt: "",
@@ -113,13 +113,13 @@ describe("plan importu", () => {
     const legs: Transaction[] = first.transfers.flatMap((t) => t.legs.map((l) => ({ ...manual, id: l.id, accountId: l.accountId, kind: "transfer" as const, amountMinor: l.amountMinor, amountPlnMinor: l.amountMinor, bookedOn: t.bookedOn, transferId: t.transferId, source: "import" as const, fingerprint: l.fingerprint })));
     // wyciąg oszczędności: te same przelewy widziane z drugiej strony (inny odcisk, przeciwny znak)
     const savings = { ...parseRevolut(fixture), rows: parseRevolut(fixture).rows.filter((r) => r.hint.type === "own-transfer").map((r) => ({ ...r, amountMinor: -r.amountMinor, fingerprint: `${r.fingerprint}:sav`, hint: { type: "own-transfer" as const, product: "current" as const, direction: r.amountMinor < 0 ? ("in" as const) : ("out" as const) } })) };
-    const plan = buildImportPlan({ statement: savings, choices: { ...choices, accountId: "sav", savingsAccountId: "rev" }, accounts, categories, transactions: legs, rules: [], newId });
+    const plan = buildImportPlan({ statement: savings, choices: { ...choices, accountId: "sav", ownAccountId: "rev" }, accounts, categories, transactions: legs, rules: [], newId });
     expect(plan.transfers).toHaveLength(0);
     expect(plan.duplicates).toBe(2);
   });
 
   it("bez konta oszczędności te wiersze są pomijane, doładowanie może być przychodem", () => {
-    const plan = buildImportPlan({ statement: parseRevolut(fixture), choices: { ...choices, savingsAccountId: null, topupFrom: "income" }, accounts, categories, transactions: [], rules: [], newId });
+    const plan = buildImportPlan({ statement: parseRevolut(fixture), choices: { ...choices, ownAccountId: null, topupFrom: "income" }, accounts, categories, transactions: [], rules: [], newId });
     expect(plan.skipped.ownTransfersWithoutAccount).toBe(2);
     expect(plan.rows.find((r) => r.description === "Doładowanie z innego banku")).toMatchObject({ kind: "income", amountMinor: 50000 });
   });

@@ -47,5 +47,5 @@ jobs:
           cat out.txt
           # każda kontrola „ok_…” musi zwrócić t, a błędów ma być dokładnie tyle, ile oczekiwanych w pliku testów
           test "$(grep -c '^ f' out.txt)" -eq 0
-          test "$(grep -c '^ t' out.txt)" -eq 21
+          test "$(grep -c '^ t' out.txt)" -eq 25
           test "$(grep -c 'ERROR' out.txt)" -eq 11

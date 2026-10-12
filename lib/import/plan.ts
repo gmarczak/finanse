@@ -6,7 +6,9 @@ import type { ParsedStatement, StatementRow } from "./model";
 
 export type ImportChoices = {
   accountId: string; // konto, którego dotyczy wyciąg
-  savingsAccountId: string | null; // dokąd idą „To/From Savings” (null = pomiń te wiersze)
+  ownAccountId: string | null; // drugie konto w tym samym banku (konto ↔ oszczędności); null = pomiń te wiersze
+  counterparties: Record<string, string | null>; // przelew do/od osoby: Twoje konto (przelew) albo null (wydatek/przychód)
+  includeExchange: boolean; // wymiana walut: domyślnie pomijana (to Twoje pieniądze z innej waluty)
   brokerAccountIds: Record<string, string | null>; // np. { xtb: "<id XTB>" } (null = traktuj jako wydatek)
   topupFrom: string | "income"; // doładowania z innego banku: z którego konta, albo przychód
   rejectedMerges: string[]; // odciski wierszy, których NIE łączyć z ręcznym wpisem
@@ -19,7 +21,8 @@ export type PlannedRow = {
   kind: Exclude<TxKind, "transfer">;
   amountMinor: Minor;
   categoryId: string | null;
-  categorySource: "rule" | "built-in" | null;
+  categorySource: "rule" | "built-in" | "interest" | null;
+  replace: boolean; // wiersz zbiorczy nadpisywany przy kolejnym imporcie (odsetki za miesiąc)
   description: string;
   bankDescription: string;
   fingerprint: string;
@@ -39,8 +42,8 @@ export type ImportPlan = {
   transfers: PlannedTransfer[];
   merges: PlannedMerge[];
   duplicates: number;
-  skipped: { pending: number; otherCurrency: number; ownTransfersWithoutAccount: number };
-  counts: { autoCategorized: number; uncategorized: number; topups: number; brokers: number; ownTransfers: number };
+  skipped: { pending: number; otherCurrency: number; ownTransfersWithoutAccount: number; exchange: number };
+  counts: { autoCategorized: number; uncategorized: number; topups: number; brokers: number; ownTransfers: number; counterparties: number; interestUpdated: number };
 };
 
 /** Czytelny opis z surowego opisu banku. */
@@ -52,12 +55,30 @@ export function cleanDescription(row: StatementRow): string {
     case "topup":
       return "Doładowanie z innego banku";
     case "own-transfer":
+      if (row.hint.product === "current") return row.hint.direction === "out" ? "Na konto główne" : "Z konta głównego";
       return row.hint.direction === "out" ? "Na oszczędności" : "Z oszczędności";
+    case "counterparty":
+      return `${row.amountMinor < 0 ? "Przelew do" : "Przelew od"}: ${row.hint.name}`;
+    case "exchange":
+      return "Wymiana walut";
     case "broker":
       return `Na ${row.hint.broker.toUpperCase()}`;
     default:
       return d.replace(/^(www\.)/i, "");
   }
+}
+
+const MONTHS_NOM = ["styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzień"];
+
+function monthName(date: LocalDate): string {
+  return `${MONTHS_NOM[Number(date.slice(5, 7)) - 1]} ${date.slice(0, 4)}`;
+}
+
+/** Nazwy osób z przelewów w wyciągu (z liczbą wierszy), do przypisania: Twoje konto czy wydatek/przychód. */
+export function counterpartiesOf(statement: ParsedStatement): { name: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const r of statement.rows) if (r.hint.type === "counterparty") counts.set(r.hint.name, (counts.get(r.hint.name) ?? 0) + 1);
+  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
 }
 
 export function buildImportPlan(input: {
@@ -70,7 +91,10 @@ export function buildImportPlan(input: {
   newId: () => string;
 }): ImportPlan {
   const { statement, choices, categories, transactions, rules, newId } = input;
-  const existing = new Set(transactions.filter((t) => t.accountId === choices.accountId && t.fingerprint).map((t) => t.fingerprint));
+  const existing = new Map(transactions.filter((t) => t.accountId === choices.accountId && t.fingerprint).map((t) => [t.fingerprint!, t]));
+  const interestCategory =
+    categories.find((c) => c.kind === "income" && c.archivedAt === null && c.name === "Odsetki") ??
+    categories.find((c) => c.kind === "income" && c.archivedAt === null && c.name === "Inne przychody");
   // Przelewy między własnymi kontami są w wyciągach obu kont. Jeśli noga już jest na tym koncie
   // (np. z importu drugiego konta), wiersz jest duplikatem: ta sama kwota, data ±1 dzień.
   const transferLegs = transactions.filter((t) => t.accountId === choices.accountId && t.kind === "transfer");
@@ -85,8 +109,8 @@ export function buildImportPlan(input: {
     transfers: [],
     merges: [],
     duplicates: 0,
-    skipped: { pending: statement.skippedPending, otherCurrency: statement.skippedOtherCurrency, ownTransfersWithoutAccount: 0 },
-    counts: { autoCategorized: 0, uncategorized: 0, topups: 0, brokers: 0, ownTransfers: 0 },
+    skipped: { pending: statement.skippedPending, otherCurrency: statement.skippedOtherCurrency, ownTransfersWithoutAccount: 0, exchange: 0 },
+    counts: { autoCategorized: 0, uncategorized: 0, topups: 0, brokers: 0, ownTransfers: 0, counterparties: 0, interestUpdated: 0 },
   };
 
   // Ręczne wpisy z tego konta, które mogą być tym samym co wiersz z banku (ta sama kwota, ±2 dni)
@@ -107,19 +131,47 @@ export function buildImportPlan(input: {
   };
 
   for (const row of statement.rows) {
-    if (existing.has(row.fingerprint)) {
+    const already = existing.get(row.fingerprint);
+    if (already && !(row.replace && already.amountMinor !== row.amountMinor)) {
       plan.duplicates++;
       continue;
     }
     const hint = row.hint;
-    const isTransferLike = hint.type === "own-transfer" || hint.type === "broker" || hint.type === "topup";
+    if (hint.type === "exchange" && !choices.includeExchange) {
+      plan.skipped.exchange++;
+      continue;
+    }
+    if (hint.type === "interest") {
+      if (already) plan.counts.interestUpdated++;
+      plan.rows.push({
+        id: already?.id ?? newId(),
+        accountId: choices.accountId,
+        bookedOn: row.bookedOn,
+        kind: row.amountMinor > 0 ? "income" : "expense",
+        amountMinor: row.amountMinor,
+        categoryId: row.amountMinor > 0 ? (interestCategory?.id ?? null) : null,
+        categorySource: "interest",
+        replace: true,
+        description: `Odsetki ${monthName(row.bookedOn)}`,
+        bankDescription: "Gross Interest",
+        fingerprint: row.fingerprint,
+      });
+      continue;
+    }
+    const counterpartAccount = hint.type === "counterparty" ? (choices.counterparties[hint.name] ?? null) : null;
+    const isTransferLike = hint.type === "own-transfer" || hint.type === "broker" || hint.type === "topup" || counterpartAccount !== null;
     if (isTransferLike && existingLeg(row)) {
       plan.duplicates++;
       continue;
     }
+    if (counterpartAccount) {
+      transfer(row, counterpartAccount);
+      plan.counts.counterparties++;
+      continue;
+    }
     if (hint.type === "own-transfer") {
-      if (choices.savingsAccountId) {
-        transfer(row, choices.savingsAccountId);
+      if (choices.ownAccountId) {
+        transfer(row, choices.ownAccountId);
         plan.counts.ownTransfers++;
       } else plan.skipped.ownTransfersWithoutAccount++;
       continue;
@@ -160,6 +212,7 @@ export function buildImportPlan(input: {
       amountMinor: row.amountMinor,
       categoryId: suggestion?.categoryId ?? null,
       categorySource: suggestion?.source ?? null,
+      replace: false,
       description: cleanDescription(row),
       bankDescription: row.description,
       fingerprint: row.fingerprint,

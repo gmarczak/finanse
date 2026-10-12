@@ -79,6 +79,16 @@ select source = 'import' and fingerprint = 'fp-bied-0001' and description = 'Bie
   from finance.transactions where id = 'aaaaaaaa-0000-0000-0000-000000000001';
 select count(*) = 2 and sum(amount_minor) = 0 as ok_import_transfer from finance.transactions where fingerprint = 'fp-sav-0001';
 
+\echo '-- odsetki: wiersz zbiorczy za miesiąc aktualizowany kolejnym importem'
+select inserted_count = 1 from finance.import_batch(:'rev', 'revolut-savings', 's.csv', 1,
+  jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'account_id', :'rev', 'booked_on', finance.today() - 1, 'kind', 'income', 'amount_minor', 100, 'category_id', :'salary', 'description', 'Odsetki', 'bank_description', 'Gross Interest', 'fingerprint', 'fp-int-2026-10', 'replace', true)));
+select inserted_count = 1 and duplicate_count = 0 from finance.import_batch(:'rev', 'revolut-savings', 's.csv', 1,
+  jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'account_id', :'rev', 'booked_on', finance.today(), 'kind', 'income', 'amount_minor', 250, 'category_id', :'salary', 'description', 'Odsetki', 'bank_description', 'Gross Interest', 'fingerprint', 'fp-int-2026-10', 'replace', true)));
+select count(*) = 1 and max(amount_minor) = 250 and max(amount_pln_minor) = 250 and max(booked_on) = finance.today() as ok_interest_replaced
+  from finance.transactions where fingerprint = 'fp-int-2026-10';
+select inserted_count = 0 and duplicate_count = 1 as ok_interest_same from finance.import_batch(:'rev', 'revolut-savings', 's.csv', 1,
+  jsonb_build_array(jsonb_build_object('id', gen_random_uuid(), 'account_id', :'rev', 'booked_on', finance.today(), 'kind', 'income', 'amount_minor', 250, 'category_id', :'salary', 'description', 'Odsetki', 'bank_description', 'Gross Interest', 'fingerprint', 'fp-int-2026-10', 'replace', true)));
+
 \echo '-- usunięcie kategorii zostawia transakcje bez kategorii'
 delete from finance.categories where id = :'food';
 select count(*) = 1 as ok_uncategorized from finance.transactions where id = 'aaaaaaaa-0000-0000-0000-000000000001' and category_id is null;
@@ -87,7 +97,7 @@ select count(*) = 1 as ok_uncategorized from finance.transactions where id = 'aa
 select set_config('request.jwt.claim.sub','22222222-2222-2222-2222-222222222222',false);
 select (select count(*) from finance.transactions) = 0 and (select count(*) from finance.accounts) = 0 and (select count(*) from finance.categories) = 0 as ok_b_isolated;
 select finance.bootstrap();
-select (select count(*) from finance.categories) = 12 as ok_b_own_categories;
+select (select count(*) from finance.categories) = 13 as ok_b_own_categories;
 update finance.transactions set amount_minor = -1 where id = 'aaaaaaaa-0000-0000-0000-000000000001';
 select finance.delete_transaction('aaaaaaaa-0000-0000-0000-000000000001');
 \echo '-- oczekiwane bledy RLS (2):'

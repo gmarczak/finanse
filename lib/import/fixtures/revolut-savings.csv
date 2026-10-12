@@ -1,0 +1,8 @@
+Date,Description,Money out,Money in,Balance
+"Mar 30, 2026",Gross Interest,,0.95 PLN,"1,000.95 PLN"
+"Mar 31, 2026",Gross Interest,,0.96 PLN,"1,001.91 PLN"
+"Apr 1, 2026",Withdrawal,100.00 PLN,,901.91 PLN
+"Apr 1, 2026",Gross Interest,,0.87 PLN,902.78 PLN
+"Apr 4, 2026",Deposit,,400.00 PLN,"1,302.78 PLN"
+"Apr 4, 2026",Deposit,,400.00 PLN,"1,702.78 PLN"
+"Apr 5, 2026",Gross Interest,,1.20 PLN,"1,703.98 PLN"

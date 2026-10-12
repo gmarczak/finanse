@@ -235,6 +235,7 @@ export async function runImport(supabase: Supabase, p: ImportPayload): Promise<I
       bank_description: r.bankDescription,
       fingerprint: r.fingerprint,
       transfer_id: null,
+      replace: r.replace,
     })),
     ...p.plan.transfers.flatMap((t) =>
       t.legs.map((l) => ({

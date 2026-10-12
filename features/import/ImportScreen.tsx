@@ -4,14 +4,15 @@ import Link from "next/link";
 import { useMemo, useState, type ChangeEvent } from "react";
 import { btnPrimary, btnSecondary, field, label, labelText } from "@/components/ui/styles";
 import { useAction, useSnapshot, useToday } from "@/lib/data/hooks";
-import { errorMessage, newId, runImport, type ImportPayload } from "@/lib/data/mutations";
+import { addAccounts, errorMessage, newId, runImport, updateAccount, type ImportPayload } from "@/lib/data/mutations";
 import type { ImportRow } from "@/lib/db/database.types";
 import type { Account } from "@/lib/domain/model";
 import { formatMoney } from "@/lib/domain/money";
 import { csvRecords } from "@/lib/import/csv";
 import type { ParsedStatement } from "@/lib/import/model";
-import { buildImportPlan, plannedCount, type ImportChoices } from "@/lib/import/plan";
+import { buildImportPlan, counterpartiesOf, plannedCount, type ImportChoices } from "@/lib/import/plan";
 import { isRevolut, parseRevolut } from "@/lib/import/revolut";
+import { isRevolutSavings, parseRevolutSavings } from "@/lib/import/revolutSavings";
 import { formatShortDate, plural } from "@/lib/format";
 
 type Loaded = { fileName: string; statement: ParsedStatement; rowCount: number };
@@ -19,10 +20,28 @@ type Loaded = { fileName: string; statement: ParsedStatement; rowCount: number }
 function readStatement(fileName: string, text: string): Loaded {
   const { header, records } = csvRecords(text);
   if (isRevolut(header)) return { fileName, statement: parseRevolut(text), rowCount: records.length };
-  throw new Error("Na razie obsługiwany jest wyciąg CSV z Revoluta (Konta → Więcej → Wyciąg). Kolejne banki wkrótce.");
+  if (isRevolutSavings(header)) return { fileName, statement: parseRevolutSavings(text), rowCount: records.length };
+  throw new Error("Na razie obsługiwane są wyciągi CSV z Revoluta: konta (Konta → Więcej → Wyciąg) i oszczędności. Kolejne banki wkrótce.");
 }
 
 const pick = (accounts: Account[], test: (a: Account) => boolean) => accounts.find((a) => a.archivedAt === null && test(a))?.id ?? null;
+
+// Zapamiętane przypisania osób z przelewów (np. „Grzegorz Marczak” → Pekao), tylko na tym urządzeniu
+const PEOPLE_KEY = "finanse-import-people";
+function readPeople(): Record<string, string | null> {
+  try {
+    return JSON.parse(localStorage.getItem(PEOPLE_KEY) ?? "{}") as Record<string, string | null>;
+  } catch {
+    return {};
+  }
+}
+function savePeople(map: Record<string, string | null>) {
+  try {
+    localStorage.setItem(PEOPLE_KEY, JSON.stringify(map));
+  } catch {
+    // brak pamięci przeglądarki: wybór obowiązuje tylko w tym imporcie
+  }
+}
 
 export function ImportScreen() {
   const { data: snapshot } = useSnapshot();
@@ -30,21 +49,45 @@ export function ImportScreen() {
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [choices, setChoices] = useState<ImportChoices | null>(null);
+  const [setBalance, setSetBalance] = useState(false);
   const [result, setResult] = useState<ImportRow | null>(null);
   const importer = useAction((s, p: ImportPayload) => runImport(s, p));
+  const anchor = useAction(updateAccount);
+  const createAccount = useAction((s, name: string) => addAccounts(s, [{ name, kind: "savings", institution: "revolut", balanceMinor: null, balanceOn: today ?? "" }], snapshot?.accounts.length ?? 0));
 
   const accounts = useMemo(() => snapshot?.accounts.filter((a) => a.archivedAt === null) ?? [], [snapshot]);
 
   // Plan liczony na nowo przy każdej zmianie wyborów (identyfikatory nowych wierszy też)
   const plan = useMemo(
     () =>
-      snapshot && loaded && choices
+      snapshot && loaded && choices && choices.accountId
         ? buildImportPlan({ statement: loaded.statement, choices, accounts: snapshot.accounts, categories: snapshot.categories, transactions: snapshot.transactions, rules: snapshot.rules, newId })
         : null,
     [snapshot, loaded, choices],
   );
 
   if (!snapshot || !today) return null;
+
+  function defaults(statement: ParsedStatement): ImportChoices {
+    const main = pick(accounts, (a) => a.institution === "revolut" && a.kind === "bank");
+    const savings = pick(accounts, (a) => a.institution === "revolut" && a.kind === "savings");
+    const isSavings = statement.accountKind === "savings";
+    const accountId = (isSavings ? savings : main) ?? (isSavings ? "" : (accounts[0]?.id ?? ""));
+    const otherBanks = accounts.filter((a) => a.kind === "bank" && a.id !== accountId);
+    const remembered = readPeople();
+    const people = Object.fromEntries(
+      counterpartiesOf(statement).map(({ name }) => [name, remembered[name] && accounts.some((a) => a.id === remembered[name]) ? remembered[name]! : null]),
+    );
+    return {
+      accountId,
+      ownAccountId: isSavings ? main : savings,
+      counterparties: people,
+      includeExchange: false,
+      brokerAccountIds: { xtb: pick(accounts, (a) => a.institution === "xtb") },
+      topupFrom: otherBanks.length === 1 ? otherBanks[0]!.id : "income",
+      rejectedMerges: [],
+    };
+  }
 
   async function onFile(e: ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -54,16 +97,13 @@ export function ImportScreen() {
     setResult(null);
     try {
       const next = readStatement(file.name, await file.text());
-      const revolut = pick(accounts, (a) => a.institution === "revolut" && a.kind === "bank") ?? accounts[0]?.id ?? "";
-      const otherBanks = accounts.filter((a) => a.kind === "bank" && a.id !== revolut);
+      const initial = defaults(next.statement);
       setLoaded(next);
-      setChoices({
-        accountId: revolut,
-        savingsAccountId: pick(accounts, (a) => a.institution === "revolut" && a.kind === "savings"),
-        brokerAccountIds: { xtb: pick(accounts, (a) => a.institution === "xtb") },
-        topupFrom: otherBanks.length === 1 ? otherBanks[0]!.id : "income",
-        rejectedMerges: [],
-      });
+      setChoices(initial);
+      const account = accounts.find((a) => a.id === initial.accountId);
+      // Saldo z banku jest dokładniejsze niż wpisane ręcznie — chyba że wpisane jest nowsze niż koniec wyciągu
+      const closing = next.statement.closingBalance;
+      setSetBalance(closing !== null && (!account || account.anchorOn === null || closing.on >= account.anchorOn));
     } catch (err) {
       setLoaded(null);
       setProblem(err instanceof Error ? err.message : String(err));
@@ -72,9 +112,17 @@ export function ImportScreen() {
 
   function submit() {
     if (!loaded || !choices || !plan) return;
+    savePeople({ ...readPeople(), ...choices.counterparties });
+    const closing = loaded.statement.closingBalance;
     importer.mutate(
       { accountId: choices.accountId, format: loaded.statement.format, fileName: loaded.fileName, rowCount: loaded.rowCount, plan },
-      { onSuccess: (r) => setResult(r), onError: (e) => setProblem(errorMessage(e)) },
+      {
+        onSuccess: (r) => {
+          setResult(r);
+          if (setBalance && closing) anchor.mutate({ id: choices.accountId, balanceMinor: closing.minor, balanceOn: closing.on });
+        },
+        onError: (e) => setProblem(errorMessage(e)),
+      },
     );
   }
 
@@ -88,6 +136,9 @@ export function ImportScreen() {
           {a.name}
         </option>
       ));
+  const isSavings = loaded?.statement.accountKind === "savings";
+  const people = loaded ? counterpartiesOf(loaded.statement) : [];
+  const closing = loaded?.statement.closingBalance ?? null;
 
   const header = (
     <header className="flex items-center gap-1">
@@ -117,7 +168,13 @@ export function ImportScreen() {
             Przypisz kategorie ({uncategorized})
           </Link>
         )}
-        <Link href="/" className={btnSecondary}>
+        <button type="button" onClick={() => {
+            setResult(null);
+            setLoaded(null);
+          }} className={btnSecondary}>
+          Wczytaj kolejny plik
+        </button>
+        <Link href="/" className="text-center text-sm font-semibold text-accent">
           Zobacz miesiąc
         </Link>
       </main>
@@ -134,117 +191,187 @@ export function ImportScreen() {
       </label>
       {!loaded && (
         <p className="text-sm text-muted">
-          Revolut: <strong>Konta → Więcej → Wyciąg</strong>, zakres dat i format, potem wybierz plik tutaj. Plik jest czytany w telefonie — do bazy trafiają tylko
-          zatwierdzone transakcje. Ten sam plik możesz wczytać drugi raz: nic się nie zdubluje.
+          Revolut: <strong>Konta → Więcej → Wyciąg</strong> (konto główne i oszczędności osobno). Plik jest czytany w telefonie — do bazy trafiają tylko zatwierdzone
+          transakcje. Ten sam plik możesz wczytać drugi raz: nic się nie zdubluje, a przelew między kontami nie wejdzie podwójnie.
         </p>
       )}
       {problem && <p className="text-sm text-danger">{problem}</p>}
 
-      {loaded && choices && plan && (
+      {loaded && choices && (
         <>
-          <div className="grid grid-cols-3 gap-2">
-            <div className="flex flex-col rounded-2xl bg-surface p-3">
-              <span className="font-serif text-[28px] font-semibold leading-tight text-accent">{plan.rows.length + plan.transfers.length}</span>
-              <span className="text-xs leading-snug text-muted">nowe pozycje</span>
-            </div>
-            <div className="flex flex-col rounded-2xl bg-surface p-3">
-              <span className="font-serif text-[28px] font-semibold leading-tight">{plan.duplicates}</span>
-              <span className="text-xs leading-snug text-muted">już są — pominięte</span>
-            </div>
-            <div className="flex flex-col rounded-2xl p-3" style={{ background: "var(--c-amber-bg)" }}>
-              <span className="font-serif text-[28px] font-semibold leading-tight" style={{ color: "var(--c-amber-fg)" }}>
-                {plan.merges.length}
-              </span>
-              <span className="text-xs leading-snug text-muted">połączone z wpisanymi ręcznie</span>
-            </div>
-          </div>
+          <p className="text-sm text-muted">
+            {loaded.statement.label} · {loaded.statement.rows.length} {plural(loaded.statement.rows.length, "pozycja", "pozycje", "pozycji")}
+            {loaded.statement.rows.length > 0 && ` · ${formatShortDate(loaded.statement.rows[0]!.bookedOn, today)} – ${formatShortDate(loaded.statement.rows[loaded.statement.rows.length - 1]!.bookedOn, today)}`}
+          </p>
 
-          <label className={label}>
-            <span className={labelText}>Konto wyciągu</span>
-            <select value={choices.accountId} onChange={(e) => set({ accountId: e.target.value })} className={field}>
-              {accountOptions()}
-            </select>
-          </label>
-
-          {hasHint("own-transfer") && (
-            <label className={label}>
-              <span className={labelText}>Przelewy z/na oszczędności ({plan.counts.ownTransfers + plan.skipped.ownTransfersWithoutAccount})</span>
-              <select value={choices.savingsAccountId ?? ""} onChange={(e) => set({ savingsAccountId: e.target.value || null })} className={field}>
-                <option value="">Pomiń (nie mam tego konta w aplikacji)</option>
-                {accountOptions(choices.accountId)}
-              </select>
-              <span className="text-xs text-muted">Przelew między własnymi kontami nie liczy się do wydatków.</span>
-            </label>
-          )}
-
-          {hasHint("broker") && (
-            <label className={label}>
-              <span className={labelText}>Wpłaty na XTB</span>
-              <select value={choices.brokerAccountIds.xtb ?? ""} onChange={(e) => set({ brokerAccountIds: { ...choices.brokerAccountIds, xtb: e.target.value || null } })} className={field}>
-                <option value="">Licz jako wydatek</option>
-                {accountOptions(choices.accountId)}
-              </select>
-            </label>
-          )}
-
-          {hasHint("topup") && (
-            <label className={label}>
-              <span className={labelText}>Doładowania z innego banku</span>
-              <select value={choices.topupFrom} onChange={(e) => set({ topupFrom: e.target.value })} className={field}>
-                <option value="income">Licz jako przychód</option>
-                {accountOptions(choices.accountId)}
-              </select>
-            </label>
-          )}
-
-          {plan.merges.length > 0 && (
-            <section className="flex flex-col gap-2">
-              <h2 className="font-serif text-xl font-semibold">To ten sam wydatek?</h2>
-              {plan.merges.map((m) => (
-                <div key={m.row.fingerprint} className="flex flex-col gap-2 rounded-2xl bg-surface px-4 py-3 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <span>
-                      <strong>{m.manual.description ?? "Bez opisu"}</strong> <span className="text-muted">· wpisane ręcznie, {formatShortDate(m.manual.bookedOn, today)}</span>
-                    </span>
-                    <strong className="shrink-0">{formatMoney(m.manual.amountMinor)}</strong>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span>
-                      <strong>{m.row.description}</strong> <span className="text-muted">· z banku, {formatShortDate(m.row.bookedOn, today)}</span>
-                    </span>
-                    <strong className="shrink-0">{formatMoney(m.row.amountMinor)}</strong>
-                  </div>
-                  <button type="button" onClick={() => set({ rejectedMerges: [...choices.rejectedMerges, m.row.fingerprint] })} className="self-start text-sm font-semibold text-accent">
-                    To dwa różne — dodaj osobno
-                  </button>
-                </div>
-              ))}
+          {isSavings && !choices.accountId ? (
+            <section className="flex flex-col gap-3 rounded-2xl bg-surface px-4 py-4">
+              <p className="text-sm">To wyciąg z oszczędności, a w aplikacji nie ma jeszcze takiego konta.</p>
+              <button
+                type="button"
+                disabled={createAccount.isPending}
+                onClick={() => createAccount.mutate("Revolut Oszczędności", { onSuccess: (created) => created[0] && set({ accountId: created[0].id }), onError: (e) => setProblem(errorMessage(e)) })}
+                className={btnPrimary}
+              >
+                Utwórz konto „Revolut Oszczędności”
+              </button>
             </section>
+          ) : (
+            <label className={label}>
+              <span className={labelText}>Konto wyciągu</span>
+              <select value={choices.accountId} onChange={(e) => set({ accountId: e.target.value })} className={field}>
+                {accountOptions()}
+              </select>
+            </label>
           )}
 
-          <ul className="flex flex-col text-sm">
-            <li className="flex justify-between border-b border-border py-2.5">
-              <span>Kategoria nadana automatycznie</span>
-              <strong>{plan.counts.autoCategorized}</strong>
-            </li>
-            <li className="flex justify-between border-b border-border py-2.5">
-              <span>Bez kategorii — przypiszesz po imporcie</span>
-              <strong className="text-warn">{plan.counts.uncategorized}</strong>
-            </li>
-            {(plan.skipped.pending > 0 || plan.skipped.otherCurrency > 0) && (
-              <li className="flex justify-between py-2.5 text-muted">
-                <span>
-                  Pominięte: {plan.skipped.pending > 0 && `${plan.skipped.pending} oczekujące (wejdą przy następnym imporcie)`}
-                  {plan.skipped.pending > 0 && plan.skipped.otherCurrency > 0 && ", "}
-                  {plan.skipped.otherCurrency > 0 && `${plan.skipped.otherCurrency} w obcej walucie (wkrótce)`}
-                </span>
-              </li>
-            )}
-          </ul>
+          {plan && (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="flex flex-col rounded-2xl bg-surface p-3">
+                  <span className="font-serif text-[28px] font-semibold leading-tight text-accent">{plan.rows.length + plan.transfers.length}</span>
+                  <span className="text-xs leading-snug text-muted">nowe pozycje</span>
+                </div>
+                <div className="flex flex-col rounded-2xl bg-surface p-3">
+                  <span className="font-serif text-[28px] font-semibold leading-tight">{plan.duplicates}</span>
+                  <span className="text-xs leading-snug text-muted">już są — pominięte</span>
+                </div>
+                <div className="flex flex-col rounded-2xl p-3" style={{ background: "var(--c-amber-bg)" }}>
+                  <span className="font-serif text-[28px] font-semibold leading-tight" style={{ color: "var(--c-amber-fg)" }}>
+                    {plan.merges.length}
+                  </span>
+                  <span className="text-xs leading-snug text-muted">połączone z wpisanymi ręcznie</span>
+                </div>
+              </div>
 
-          <button type="button" onClick={submit} disabled={importer.isPending || plannedCount(plan) === 0} className={`${btnPrimary} mb-6`}>
-            {importer.isPending ? "Importuję…" : plannedCount(plan) === 0 ? "Nic nowego w tym pliku" : `Zatwierdź import (${plannedCount(plan)})`}
-          </button>
+              {hasHint("own-transfer") && (
+                <label className={label}>
+                  <span className={labelText}>
+                    {isSavings ? "Przelewy z/na konto główne" : "Przelewy z/na oszczędności"} ({plan.counts.ownTransfers + plan.skipped.ownTransfersWithoutAccount})
+                  </span>
+                  <select value={choices.ownAccountId ?? ""} onChange={(e) => set({ ownAccountId: e.target.value || null })} className={field}>
+                    <option value="">Pomiń (nie mam tego konta w aplikacji)</option>
+                    {accountOptions(choices.accountId)}
+                  </select>
+                  <span className="text-xs text-muted">Przelew między własnymi kontami nie liczy się do wydatków.</span>
+                </label>
+              )}
+
+              {people.length > 0 && (
+                <section className="flex flex-col gap-2">
+                  <h2 className={labelText}>Przelewy do i od osób</h2>
+                  <p className="text-xs text-muted">Jeśli to Twoje konto w innym banku, wybierz je — wtedy to przelew, nie wydatek ani przychód.</p>
+                  {people.map((p) => (
+                    <label key={p.name} className="flex items-center justify-between gap-3">
+                      <span className="min-w-0 truncate text-sm">
+                        {p.name} <span className="text-muted">({p.count})</span>
+                      </span>
+                      <select
+                        value={choices.counterparties[p.name] ?? ""}
+                        onChange={(e) => set({ counterparties: { ...choices.counterparties, [p.name]: e.target.value || null } })}
+                        className="h-11 max-w-[11rem] shrink-0 rounded-xl border border-border bg-surface px-2 text-sm"
+                      >
+                        <option value="">Wydatek / przychód</option>
+                        {accountOptions(choices.accountId)}
+                      </select>
+                    </label>
+                  ))}
+                </section>
+              )}
+
+              {hasHint("broker") && (
+                <label className={label}>
+                  <span className={labelText}>Wpłaty na XTB</span>
+                  <select value={choices.brokerAccountIds.xtb ?? ""} onChange={(e) => set({ brokerAccountIds: { ...choices.brokerAccountIds, xtb: e.target.value || null } })} className={field}>
+                    <option value="">Licz jako wydatek</option>
+                    {accountOptions(choices.accountId)}
+                  </select>
+                </label>
+              )}
+
+              {hasHint("topup") && (
+                <label className={label}>
+                  <span className={labelText}>Doładowania z innego banku lub karty</span>
+                  <select value={choices.topupFrom} onChange={(e) => set({ topupFrom: e.target.value })} className={field}>
+                    <option value="income">Licz jako przychód</option>
+                    {accountOptions(choices.accountId)}
+                  </select>
+                </label>
+              )}
+
+              {hasHint("exchange") && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={choices.includeExchange} onChange={(e) => set({ includeExchange: e.target.checked })} className="h-[18px] w-[18px] accent-[var(--accent)]" />
+                  Licz wymianę walut na złotówki jako przychód (domyślnie pomijana — to Twoje pieniądze z innej waluty)
+                </label>
+              )}
+
+              {closing && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={setBalance} onChange={(e) => setSetBalance(e.target.checked)} className="h-[18px] w-[18px] accent-[var(--accent)]" />
+                  Ustaw saldo konta z wyciągu: <strong>{formatMoney(closing.minor)}</strong> ({formatShortDate(closing.on, today)})
+                </label>
+              )}
+
+              {plan.merges.length > 0 && (
+                <section className="flex flex-col gap-2">
+                  <h2 className="font-serif text-xl font-semibold">To ten sam wydatek?</h2>
+                  {plan.merges.map((m) => (
+                    <div key={m.row.fingerprint} className="flex flex-col gap-2 rounded-2xl bg-surface px-4 py-3 text-sm">
+                      <div className="flex justify-between gap-3">
+                        <span>
+                          <strong>{m.manual.description ?? "Bez opisu"}</strong> <span className="text-muted">· wpisane ręcznie, {formatShortDate(m.manual.bookedOn, today)}</span>
+                        </span>
+                        <strong className="shrink-0">{formatMoney(m.manual.amountMinor)}</strong>
+                      </div>
+                      <div className="flex justify-between gap-3">
+                        <span>
+                          <strong>{m.row.description}</strong> <span className="text-muted">· z banku, {formatShortDate(m.row.bookedOn, today)}</span>
+                        </span>
+                        <strong className="shrink-0">{formatMoney(m.row.amountMinor)}</strong>
+                      </div>
+                      <button type="button" onClick={() => set({ rejectedMerges: [...choices.rejectedMerges, m.row.fingerprint] })} className="self-start text-sm font-semibold text-accent">
+                        To dwa różne — dodaj osobno
+                      </button>
+                    </div>
+                  ))}
+                </section>
+              )}
+
+              <ul className="flex flex-col text-sm">
+                <li className="flex justify-between border-b border-border py-2.5">
+                  <span>Kategoria nadana automatycznie</span>
+                  <strong>{plan.counts.autoCategorized}</strong>
+                </li>
+                <li className="flex justify-between border-b border-border py-2.5">
+                  <span>Bez kategorii — przypiszesz po imporcie</span>
+                  <strong className="text-warn">{plan.counts.uncategorized}</strong>
+                </li>
+                {plan.counts.interestUpdated > 0 && (
+                  <li className="flex justify-between border-b border-border py-2.5">
+                    <span>Odsetki za miesiąc zaktualizowane</span>
+                    <strong>{plan.counts.interestUpdated}</strong>
+                  </li>
+                )}
+                {(plan.skipped.pending > 0 || plan.skipped.otherCurrency > 0 || plan.skipped.exchange > 0) && (
+                  <li className="py-2.5 text-muted">
+                    Pominięte:{" "}
+                    {[
+                      plan.skipped.pending > 0 && `${plan.skipped.pending} oczekujące (wejdą przy następnym imporcie)`,
+                      plan.skipped.otherCurrency > 0 && `${plan.skipped.otherCurrency} w obcej walucie`,
+                      plan.skipped.exchange > 0 && `${plan.skipped.exchange} wymiana walut`,
+                    ]
+                      .filter(Boolean)
+                      .join(", ")}
+                  </li>
+                )}
+              </ul>
+
+              <button type="button" onClick={submit} disabled={importer.isPending || plannedCount(plan) === 0} className={`${btnPrimary} mb-6`}>
+                {importer.isPending ? "Importuję…" : plannedCount(plan) === 0 ? "Nic nowego w tym pliku" : `Zatwierdź import (${plannedCount(plan)})`}
+              </button>
+            </>
+          )}
         </>
       )}
     </main>
