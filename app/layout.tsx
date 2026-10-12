@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import "@fontsource-variable/fraunces/opsz.css";
 import "@fontsource-variable/work-sans/index.css";
 import "./globals.css";
+import { THEME_SCRIPT } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "Finanse",
@@ -17,15 +18,15 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f5f0e8" },
-    { media: "(prefers-color-scheme: dark)", color: "#25272b" },
-  ],
+  themeColor: "#f5f0e8", // przy ciemnym motywie podmienia go THEME_SCRIPT
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="pl">
+    <html lang="pl" data-theme="light" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
+      </head>
       <body>{children}</body>
     </html>
   );

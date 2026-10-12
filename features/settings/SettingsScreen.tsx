@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { del } from "idb-keyval";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useToast } from "@/components/ui/Toast";
 import { btnSecondary, field, label, labelText, sectionTitle } from "@/components/ui/styles";
 import { PasswordForm } from "@/features/auth/PasswordForm";
@@ -12,6 +12,7 @@ import { useAction, useSnapshot } from "@/lib/data/hooks";
 import { errorMessage, saveSettings } from "@/lib/data/mutations";
 import type { Snapshot } from "@/lib/data/snapshot";
 import { supabaseBrowser } from "@/lib/db/client";
+import { applyTheme, readTheme, THEMES, type Theme } from "@/lib/theme";
 
 const DAYS = Array.from({ length: 28 }, (_, i) => i + 1);
 
@@ -21,6 +22,9 @@ export function SettingsScreen() {
   const qc = useQueryClient();
   const toast = useToast();
   const [signingOut, setSigningOut] = useState(false);
+  const [theme, setTheme] = useState<Theme>("light");
+  // eslint-disable-next-line react-hooks/set-state-in-effect -- wybór zapisany w przeglądarce, dostępny dopiero po zamontowaniu
+  useEffect(() => setTheme(readTheme()), []);
   const save = useAction(saveSettings, (s: Snapshot, input) => ({
     ...s,
     settings: { ...s.settings, ...(input.monthStartDay !== undefined && { monthStartDay: input.monthStartDay }) },
@@ -64,6 +68,28 @@ export function SettingsScreen() {
           </select>
           <span className="text-xs text-muted">Podsumowanie i limity liczą się od tego dnia do dnia przed nim w kolejnym miesiącu.</span>
         </label>
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h2 className={sectionTitle}>Wygląd</h2>
+        <div role="radiogroup" aria-label="Motyw" className="flex rounded-full bg-surface p-1">
+          {THEMES.map((t) => (
+            <button
+              key={t.value}
+              type="button"
+              role="radio"
+              aria-checked={theme === t.value}
+              onClick={() => {
+                applyTheme(t.value);
+                setTheme(t.value);
+              }}
+              className={`h-10 flex-1 rounded-full text-sm ${theme === t.value ? "bg-bg font-semibold text-text" : "font-medium text-muted"}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-muted">Zapisane na tym urządzeniu.</span>
       </section>
 
       <section className="flex flex-col gap-3">
