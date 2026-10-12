@@ -10,11 +10,11 @@ import { useAction, useSnapshot, useToday } from "@/lib/data/hooks";
 import { addAccounts, errorMessage, updateAccount } from "@/lib/data/mutations";
 import { balanceOn, netWorth } from "@/lib/domain/balance";
 import type { LocalDate } from "@/lib/domain/dates";
-import type { Account, AccountKind } from "@/lib/domain/model";
+import { institutionFromName, type Account, type AccountKind } from "@/lib/domain/model";
 import { formatMoney, parseAmount } from "@/lib/domain/money";
 import { AccountBadge } from "@/lib/ui/icons";
 
-const KIND_LABEL: Record<AccountKind, string> = { bank: "konto bankowe", broker: "konto maklerskie", cash: "gotówka" };
+const KIND_LABEL: Record<AccountKind, string> = { bank: "konto bankowe", savings: "konto oszczędnościowe", broker: "konto maklerskie", cash: "gotówka" };
 
 type Editing = { mode: "new" } | { mode: "edit"; account: Account };
 
@@ -44,7 +44,7 @@ function AccountEditor({ editing, current, today, nextOrder, onClose }: { editin
         { onError },
       );
     } else {
-      create.mutate([{ name, kind, institution: null, balanceMinor: parsed, balanceOn: today }], { onError });
+      create.mutate([{ name, kind, institution: institutionFromName(name), balanceMinor: parsed, balanceOn: today }], { onError });
     }
     onClose();
   }
@@ -60,6 +60,7 @@ function AccountEditor({ editing, current, today, nextOrder, onClose }: { editin
           <span className={labelText}>Rodzaj</span>
           <select value={kind} onChange={(e) => setKind(e.target.value as AccountKind)} className={field}>
             <option value="bank">Konto bankowe</option>
+            <option value="savings">Konto oszczędnościowe</option>
             <option value="broker">Konto maklerskie</option>
             <option value="cash">Gotówka</option>
           </select>

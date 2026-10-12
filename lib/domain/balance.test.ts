@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { balanceOn, netWorth } from "./balance";
-import type { Account, Transaction } from "./model";
+import { institutionFromName, type Account, type Transaction } from "./model";
 
 const acc = (id: string, anchor: number | null, anchorOn: string | null): Account => ({
   id, name: id, kind: "bank", institution: null, currency: "PLN", anchorBalanceMinor: anchor, anchorOn, sortOrder: 0, archivedAt: null,
@@ -29,5 +29,14 @@ describe("saldo od kotwicy", () => {
     const old = { ...acc("old", 100, "2026-01-01"), archivedAt: "2026-02-01" };
     expect(balanceOn(rev, txs, "2026-10-13")).toBeNull();
     expect(netWorth([pekao, rev, old], txs, "2026-10-13")).toEqual({ totalMinor: 841000, tracked: 1, untracked: 1 });
+  });
+});
+
+describe("instytucja z nazwy konta", () => {
+  it("rozpoznaje banki i gotówkę", () => {
+    expect(institutionFromName("Revolut Oszczędności")).toBe("revolut");
+    expect(institutionFromName("PKO BP")).toBe("pko");
+    expect(institutionFromName("Gotówka")).toBe("cash");
+    expect(institutionFromName("Skarbonka")).toBeNull();
   });
 });

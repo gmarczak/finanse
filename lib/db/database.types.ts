@@ -3,7 +3,7 @@
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
 type Enums = {
-  account_kind: "bank" | "broker" | "cash";
+  account_kind: "bank" | "savings" | "broker" | "cash";
   billing_cycle: "weekly" | "monthly" | "yearly";
   category_kind: "expense" | "income";
   tx_kind: "expense" | "income" | "transfer";

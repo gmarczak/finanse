@@ -6,7 +6,7 @@ import { useAction } from "@/lib/data/hooks";
 import { addAccounts, errorMessage, type AccountForm } from "@/lib/data/mutations";
 import type { Snapshot } from "@/lib/data/snapshot";
 import type { LocalDate } from "@/lib/domain/dates";
-import type { AccountKind } from "@/lib/domain/model";
+import { institutionFromName, type AccountKind } from "@/lib/domain/model";
 import { parseAmount } from "@/lib/domain/money";
 import { AccountBadge } from "@/lib/ui/icons";
 
@@ -14,6 +14,7 @@ type Preset = { key: string; name: string; kind: AccountKind; institution: strin
 
 const PRESETS: Preset[] = [
   { key: "revolut", name: "Revolut", kind: "bank", institution: "revolut", hint: "karta i konto" },
+  { key: "revolut-savings", name: "Revolut Oszczędności", kind: "savings", institution: "revolut", hint: "konto oszczędnościowe" },
   { key: "pekao", name: "Pekao", kind: "bank", institution: "pekao", hint: "konto osobiste" },
   { key: "xtb", name: "XTB", kind: "broker", institution: "xtb", hint: "konto maklerskie" },
   { key: "mbank", name: "mBank", kind: "bank", institution: "mbank", hint: "konto osobiste" },
@@ -46,7 +47,7 @@ export function Onboarding({ snapshot, today }: { snapshot: Snapshot; today: Loc
       if (raw !== "" && balance === null) return setError(`Nie rozumiem salda dla ${preset.name}. Wpisz np. 1 250,00.`);
       forms.push({ name: preset.name, kind: preset.kind, institution: preset.institution, balanceMinor: balance, balanceOn: today });
     }
-    if (custom.trim()) forms.push({ name: custom.trim(), kind: "bank", institution: null, balanceMinor: null, balanceOn: today });
+    if (custom.trim()) forms.push({ name: custom.trim(), kind: "bank", institution: institutionFromName(custom), balanceMinor: null, balanceOn: today });
     if (forms.length === 0) return setError("Wybierz przynajmniej jedno konto.");
     setError(null);
     create.mutate(forms, { onError: (e) => setError(errorMessage(e)) });
