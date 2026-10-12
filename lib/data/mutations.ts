@@ -1,5 +1,6 @@
 import type { Supabase } from "@/lib/db/client";
-import type { AccountRow, TransactionRow } from "@/lib/db/database.types";
+import type { AccountRow, ImportRow, TransactionRow } from "@/lib/db/database.types";
+import type { ImportPlan } from "@/lib/import/plan";
 import type { LocalDate } from "@/lib/domain/dates";
 import type { Account, AccountKind, Transaction } from "@/lib/domain/model";
 import type { Minor } from "@/lib/domain/money";
@@ -67,6 +68,7 @@ export function draftToTransactions(draft: TxDraft): Transaction[] {
     currency: "PLN",
     bankDescription: null,
     source: "manual" as const,
+    fingerprint: null,
     createdAt: new Date().toISOString(), // eslint-disable-line no-restricted-syntax -- znacznik czasu, nie data dnia
   };
   if (draft.type === "transfer") {
@@ -208,4 +210,80 @@ export function errorMessage(error: unknown): string {
   if (/accounts_user_id_name_key|duplicate key.*name/.test(message)) return "Masz już konto o tej nazwie.";
   if (/Failed to fetch|NetworkError|network/i.test(message)) return "Brak połączenia. Spróbuj, gdy wróci internet.";
   return message;
+}
+
+// ============ IMPORT I REGUŁY KATEGORII ============
+
+export type ImportPayload = {
+  accountId: string;
+  format: string;
+  fileName: string;
+  rowCount: number;
+  plan: ImportPlan;
+};
+
+export async function runImport(supabase: Supabase, p: ImportPayload): Promise<ImportRow> {
+  const rows = [
+    ...p.plan.rows.map((r) => ({
+      id: r.id,
+      account_id: r.accountId,
+      booked_on: r.bookedOn,
+      kind: r.kind,
+      amount_minor: r.amountMinor,
+      category_id: r.categoryId,
+      description: r.description,
+      bank_description: r.bankDescription,
+      fingerprint: r.fingerprint,
+      transfer_id: null,
+    })),
+    ...p.plan.transfers.flatMap((t) =>
+      t.legs.map((l) => ({
+        id: l.id,
+        account_id: l.accountId,
+        booked_on: t.bookedOn,
+        kind: "transfer",
+        amount_minor: l.amountMinor,
+        category_id: null,
+        description: t.description,
+        bank_description: l.bankDescription,
+        fingerprint: l.fingerprint,
+        transfer_id: t.transferId,
+      })),
+    ),
+  ];
+  const merges = p.plan.merges.map((m) => ({ id: m.manual.id, fingerprint: m.row.fingerprint, bank_description: m.row.description, booked_on: m.row.bookedOn }));
+  const { data, error } = await supabase.rpc("import_batch", {
+    p_account_id: p.accountId,
+    p_format: p.format,
+    p_file_name: p.fileName,
+    p_row_count: p.rowCount,
+    p_rows: rows,
+    p_merges: merges,
+  });
+  if (error) throw error;
+  return data as ImportRow;
+}
+
+/**
+ * Przypisanie kategorii; z „zapamiętaj” także reguła na przyszłe importy
+ * i ta sama kategoria dla pozostałych nieskategoryzowanych z tym samym sklepem.
+ */
+export async function assignCategory(supabase: Supabase, input: { ids: string[]; categoryId: string; pattern: string | null }): Promise<void> {
+  const { error } = await supabase.from("transactions").update({ category_id: input.categoryId }).in("id", input.ids);
+  if (error) throw error;
+  if (input.pattern && input.pattern.length >= 2) {
+    const { error: ruleError } = await supabase
+      .from("category_rules")
+      .upsert({ pattern: input.pattern, category_id: input.categoryId }, { onConflict: "user_id,pattern" });
+    if (ruleError) throw ruleError;
+  }
+}
+
+export function withAssigned(snapshot: Snapshot, input: { ids: string[]; categoryId: string; pattern: string | null }): Snapshot {
+  const ids = new Set(input.ids);
+  return {
+    ...snapshot,
+    transactions: snapshot.transactions.map((t) => (ids.has(t.id) ? { ...t, categoryId: input.categoryId } : t)),
+    rules: input.pattern ? [...snapshot.rules.filter((r) => r.pattern !== input.pattern), { pattern: input.pattern, categoryId: input.categoryId }] : snapshot.rules,
+  };
 }

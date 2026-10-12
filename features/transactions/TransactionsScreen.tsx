@@ -3,7 +3,9 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMemo, useState } from "react";
 import { useAction, useSnapshot, useToday } from "@/lib/data/hooks";
-import { updateTransaction, withPatch } from "@/lib/data/mutations";
+import { assignCategory, withAssigned } from "@/lib/data/mutations";
+import { normalizeMerchant } from "@/lib/import/categorize";
+import Link from "next/link";
 import { txTitle, type Category, type Transaction } from "@/lib/domain/model";
 import { formatMoney } from "@/lib/domain/money";
 import { periodByKey, periodLabel, periodOf } from "@/lib/domain/period";
@@ -32,7 +34,8 @@ export function TransactionsScreen() {
   const [editing, setEditing] = useState<Transaction | null>(null);
   const [query, setQuery] = useState("");
   const onDelete = useDeleteWithUndo();
-  const assign = useAction(updateTransaction, withPatch);
+  const assign = useAction(assignCategory, withAssigned);
+  const [remember, setRemember] = useState(true);
 
   const startDay = snapshot?.settings.monthStartDay ?? 1;
   const periodKey = params.get("period") ?? (today ? periodOf(today, startDay).key : "");
@@ -80,7 +83,11 @@ export function TransactionsScreen() {
   });
   const sorted = [...visible].sort((a, b) => (a.bookedOn === b.bookedOn ? (a.createdAt < b.createdAt ? 1 : -1) : a.bookedOn < b.bookedOn ? 1 : -1));
   const uncategorized = sorted.filter((t) => t.kind !== "transfer" && t.categoryId === null);
-  const first = categoryFilter === "none" ? undefined : uncategorized[0];
+  const first = uncategorized[0];
+  // Ten sam sklep w innych nieskategoryzowanych: jedna decyzja dla wszystkich + reguła na przyszłe importy
+  const merchantOf = (t: Transaction) => normalizeMerchant(t.bankDescription ?? t.description ?? "");
+  const firstMerchant = first ? merchantOf(first) : "";
+  const sameMerchant = first && firstMerchant.length >= 2 ? snapshot.transactions.filter((t) => t.kind === first.kind && t.categoryId === null && merchantOf(t) === firstMerchant) : first ? [first] : [];
   const spent = visible.reduce((s, t) => (t.kind === "expense" ? s - t.amountPlnMinor : s), 0);
   const income = visible.reduce((s, t) => (t.kind === "income" ? s + t.amountPlnMinor : s), 0);
 
@@ -105,6 +112,12 @@ export function TransactionsScreen() {
     <main className="flex flex-col gap-4 px-5 pt-6">
       <header className="flex items-center justify-between">
         <h1 className="font-serif text-[32px] font-semibold">Transakcje</h1>
+        <Link href="/import" className="flex h-11 items-center gap-1.5 rounded-full bg-surface px-4 text-sm font-semibold">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v12M7 10l5 5 5-5M5 21h14" />
+          </svg>
+          Import
+        </Link>
       </header>
 
       <label className="block">
@@ -165,7 +178,7 @@ export function TransactionsScreen() {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {(first.kind === "income" ? snapshot.categories.filter((c) => c.kind === "income" && c.archivedAt === null).slice(0, 3) : quickCategories).map((c) => (
-              <button key={c.id} type="button" onClick={() => assign.mutate({ id: first.id, categoryId: c.id })} className="h-9 rounded-full bg-bg px-3 text-[13px] font-medium">
+              <button key={c.id} type="button" onClick={() => assign.mutate({ ids: remember ? sameMerchant.map((t) => t.id) : [first.id], categoryId: c.id, pattern: remember && firstMerchant.length >= 2 ? firstMerchant : null })} className="h-9 rounded-full bg-bg px-3 text-[13px] font-medium">
                 {c.name}
               </button>
             ))}
@@ -173,6 +186,12 @@ export function TransactionsScreen() {
               Inna…
             </button>
           </div>
+          {firstMerchant.length >= 2 && (
+            <label className="flex items-center gap-2 text-[13px]">
+              <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-[18px] w-[18px] accent-[var(--accent)]" />
+              Zapamiętaj dla „{firstMerchant}”{sameMerchant.length > 1 && ` (i ${sameMerchant.length - 1} podobnych teraz)`}
+            </label>
+          )}
         </section>
       )}
 
@@ -212,7 +231,7 @@ export function TransactionsScreen() {
                           <span className="block truncate text-[13px] text-muted">{meta}</span>
                         </span>
                         <span className={`shrink-0 font-semibold ${t.kind === "income" ? "text-accent" : t.kind === "transfer" ? "text-muted" : ""}`}>
-                          {formatMoney(t.kind === "transfer" ? Math.abs(t.amountMinor) : t.amountMinor, { plusSign: t.kind === "income", currency: t.currency })}
+                          {formatMoney(t.kind === "transfer" ? Math.abs(t.amountMinor) : t.amountMinor, { plusSign: t.kind !== "transfer" && t.amountMinor > 0, currency: t.currency })}
                         </span>
                       </button>
                     </li>

@@ -11,7 +11,7 @@ let n = 0;
 const tx = (bookedOn: string, amount: number, categoryId: string | null, kind: Transaction["kind"] = amount < 0 ? "expense" : "income"): Transaction => ({
   id: `t${++n}`, accountId: "a", bookedOn, kind, amountMinor: amount, currency: "PLN", amountPlnMinor: amount,
   categoryId, description: null, bankDescription: null, note: null, source: "manual",
-  transferId: kind === "transfer" ? "tr" : null, createdAt: "",
+  transferId: kind === "transfer" ? "tr" : null, fingerprint: null, createdAt: "",
 });
 
 describe("okresy", () => {

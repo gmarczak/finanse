@@ -40,9 +40,11 @@ select finance.set_budget(:'food', finance.today(), 80000);
 select finance.set_budget(:'food', finance.today(), 90000);
 select count(*) = 1 and max(amount_minor) = 90000 and extract(day from max(valid_from)) = 1 as ok_budget from finance.budgets;
 
-\echo '-- oczekiwane bledy (10):'
+\echo '-- zwrot (np. Card Refund) to wydatek z dodatnią kwotą'
+select amount_minor = 427 and kind = 'expense' as ok_refund from finance.add_transaction(gen_random_uuid(), :'rev', finance.today(), 'expense', 427, :'food', 'Zwrot');
+
+\echo '-- oczekiwane bledy (9):'
 select finance.add_transaction(gen_random_uuid(), :'rev', finance.today() + 1, 'expense', -100);          -- przyszłość
-select finance.add_transaction(gen_random_uuid(), :'rev', finance.today(), 'expense', 100);               -- wydatek dodatni
 select finance.add_transaction(gen_random_uuid(), :'rev', finance.today(), 'income', 100, :'food');      -- przychód w kategorii wydatków
 select finance.add_transaction(gen_random_uuid(), :'rev', finance.today(), 'expense', -100, :'salary');  -- wydatek w kategorii przychodów
 select finance.add_transaction(gen_random_uuid(), :'rev', finance.today(), 'expense', -100, null, 'x', null, 'EUR'); -- waluta bez kursu
@@ -59,6 +61,23 @@ insert into finance.transactions(account_id, booked_on, kind, amount_minor, amou
 values (:'rev', finance.today(), 'expense', -1499, -1499, 'import', 'fp-zabka-0001', 'ZABKA Z4521')
 on conflict (account_id, fingerprint) do nothing;
 select count(*) = 1 as ok_dedup from finance.transactions where fingerprint = 'fp-zabka-0001';
+
+\echo '-- import: ręczny wpis łączy się z wierszem z banku, przelew wchodzi parą, drugi import nic nie dodaje'
+select inserted_count = 3 and duplicate_count = 0 as ok_import_first from finance.import_batch(:'rev', 'revolut', 'a.csv', 3,
+  jsonb_build_array(
+    jsonb_build_object('id', gen_random_uuid(), 'account_id', :'rev', 'booked_on', finance.today(), 'kind', 'expense', 'amount_minor', -500, 'description', 'Kino', 'bank_description', 'KINO 1', 'fingerprint', 'fp-kino-0001'),
+    jsonb_build_object('id', 'cccccccc-0000-0000-0000-000000000001', 'account_id', :'rev', 'booked_on', finance.today(), 'kind', 'transfer', 'amount_minor', -1000, 'description', 'Na oszczędności', 'bank_description', 'To PLN Savings account', 'fingerprint', 'fp-sav-0001', 'transfer_id', 'cccccccc-0000-0000-0000-000000000001'),
+    jsonb_build_object('id', gen_random_uuid(), 'account_id', :'pek', 'booked_on', finance.today(), 'kind', 'transfer', 'amount_minor', 1000, 'description', 'Na oszczędności', 'bank_description', 'To PLN Savings account', 'fingerprint', 'fp-sav-0001', 'transfer_id', 'cccccccc-0000-0000-0000-000000000001')),
+  jsonb_build_array(jsonb_build_object('id', 'aaaaaaaa-0000-0000-0000-000000000001', 'fingerprint', 'fp-bied-0001', 'bank_description', 'BIEDRONKA 12', 'booked_on', finance.today())));
+select inserted_count = 0 and duplicate_count = 3 as ok_import_again from finance.import_batch(:'rev', 'revolut', 'a.csv', 3,
+  jsonb_build_array(
+    jsonb_build_object('id', gen_random_uuid(), 'account_id', :'rev', 'booked_on', finance.today(), 'kind', 'expense', 'amount_minor', -500, 'description', 'Kino', 'bank_description', 'KINO 1', 'fingerprint', 'fp-kino-0001'),
+    jsonb_build_object('id', gen_random_uuid(), 'account_id', :'rev', 'booked_on', finance.today(), 'kind', 'transfer', 'amount_minor', -1000, 'description', 'Na oszczędności', 'bank_description', 'x', 'fingerprint', 'fp-sav-0001', 'transfer_id', 'dddddddd-0000-0000-0000-000000000001'),
+    jsonb_build_object('id', gen_random_uuid(), 'account_id', :'pek', 'booked_on', finance.today(), 'kind', 'transfer', 'amount_minor', 1000, 'description', 'Na oszczędności', 'bank_description', 'x', 'fingerprint', 'fp-sav-0001', 'transfer_id', 'dddddddd-0000-0000-0000-000000000001')),
+  jsonb_build_array(jsonb_build_object('id', 'aaaaaaaa-0000-0000-0000-000000000001', 'fingerprint', 'fp-bied-0001', 'bank_description', 'BIEDRONKA 12', 'booked_on', finance.today())));
+select source = 'import' and fingerprint = 'fp-bied-0001' and description = 'Biedronka' and category_id is not null as ok_merged
+  from finance.transactions where id = 'aaaaaaaa-0000-0000-0000-000000000001';
+select count(*) = 2 and sum(amount_minor) = 0 as ok_import_transfer from finance.transactions where fingerprint = 'fp-sav-0001';
 
 \echo '-- usunięcie kategorii zostawia transakcje bez kategorii'
 delete from finance.categories where id = :'food';

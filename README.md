@@ -51,7 +51,7 @@ Migracje w `supabase/migrations` są źródłem prawdy. Schemat `finance` musi b
 ```bash
 psql -f supabase/tests/auth_stub.sql
 for f in supabase/migrations/*.sql; do psql -f "$f"; done
-psql -f supabase/tests/behavior.sql   # każde ok_… = t, dokładnie 12 oczekiwanych błędów
+psql -f supabase/tests/behavior.sql   # każde ok_… = t, dokładnie 11 oczekiwanych błędów
 ```
 
 ## Wdrożenie

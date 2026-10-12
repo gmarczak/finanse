@@ -50,6 +50,7 @@ export type Transaction = {
   note: string | null;
   source: "manual" | "import";
   transferId: string | null;
+  fingerprint: string | null; // odcisk wiersza z wyciągu (tylko import)
   createdAt: string;
 };
 

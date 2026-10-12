@@ -7,7 +7,7 @@ const acc = (id: string, anchor: number | null, anchorOn: string | null): Accoun
 });
 const tx = (accountId: string, bookedOn: string, amount: number): Transaction => ({
   id: `${accountId}-${bookedOn}-${amount}`, accountId, bookedOn, kind: amount < 0 ? "expense" : "income", amountMinor: amount, currency: "PLN",
-  amountPlnMinor: amount, categoryId: null, description: null, bankDescription: null, note: null, source: "manual", transferId: null, createdAt: "",
+  amountPlnMinor: amount, categoryId: null, description: null, bankDescription: null, note: null, source: "manual", transferId: null, fingerprint: null, createdAt: "",
 });
 
 describe("saldo od kotwicy", () => {

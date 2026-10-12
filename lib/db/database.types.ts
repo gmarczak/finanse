@@ -200,6 +200,10 @@ export type Database = {
       delete_transaction: { Args: { p_id: string }; Returns: undefined };
       set_budget: { Args: { p_category_id: string; p_month: string; p_amount_minor: number }; Returns: undefined };
       can_access: { Args: { p_user_id: string }; Returns: boolean };
+      import_batch: {
+        Args: { p_account_id: string; p_format: string; p_file_name: string; p_row_count: number; p_rows: Json; p_merges?: Json };
+        Returns: ImportRow;
+      };
     };
     Enums: Enums;
     CompositeTypes: { [_ in never]: never };

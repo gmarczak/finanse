@@ -1,5 +1,6 @@
 import type { Supabase } from "@/lib/db/client";
-import type { AccountRow, BudgetRow, CategoryRow, TransactionRow } from "@/lib/db/database.types";
+import type { AccountRow, BudgetRow, CategoryRow, CategoryRuleRow, TransactionRow } from "@/lib/db/database.types";
+import type { CategoryRule } from "@/lib/import/categorize";
 import { COLORS, type Account, type Budget, type Category, type Color, type Settings, type Transaction } from "@/lib/domain/model";
 
 /**
@@ -15,6 +16,7 @@ export type Snapshot = {
   categories: Category[];
   budgets: Budget[];
   transactions: Transaction[];
+  rules: CategoryRule[];
 };
 
 function toColor(value: string): Color {
@@ -58,6 +60,7 @@ export function toTransaction(r: TransactionRow): Transaction {
     note: r.note,
     source: r.source,
     transferId: r.transfer_id,
+    fingerprint: r.fingerprint,
     createdAt: r.created_at,
   };
 }
@@ -94,13 +97,14 @@ export async function fetchSnapshot(supabase: Supabase): Promise<Snapshot> {
     if (settingsError || !settings) throw settingsError ?? new Error("Nie udało się przygotować konta");
   }
 
-  const [accounts, categories, budgets, transactions] = await Promise.all([
+  const [accounts, categories, budgets, rules, transactions] = await Promise.all([
     supabase.from("accounts").select("*").order("sort_order").order("created_at"),
     supabase.from("categories").select("*").order("kind").order("sort_order").order("name"),
     supabase.from("budgets").select("*"),
+    supabase.from("category_rules").select("*"),
     allTransactions(supabase),
   ]);
-  for (const r of [accounts, categories, budgets]) if (r.error) throw r.error;
+  for (const r of [accounts, categories, budgets, rules]) if (r.error) throw r.error;
 
   return {
     userId: auth.user.id,
@@ -110,5 +114,6 @@ export async function fetchSnapshot(supabase: Supabase): Promise<Snapshot> {
     categories: (categories.data as CategoryRow[]).map(toCategory),
     budgets: (budgets.data as BudgetRow[]).map(toBudget),
     transactions: transactions.map(toTransaction),
+    rules: (rules.data as CategoryRuleRow[]).map((r) => ({ pattern: r.pattern, categoryId: r.category_id })),
   };
 }
