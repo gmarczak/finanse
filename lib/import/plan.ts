@@ -208,7 +208,8 @@ export function buildImportPlan(input: {
       }
     }
 
-    const suggestion = hint.type === "atm" ? null : suggestCategory(row.description, kind, rules, categories);
+    // Bankomat: tylko reguły użytkownika — wbudowane podpowiedzi wzięłyby „Stokrotkę” z nazwy bankomatu za zakupy
+    const suggestion = suggestCategory(row.description, kind, rules, categories, { builtIn: hint.type !== "atm" });
     if (suggestion) plan.counts.autoCategorized++;
     else plan.counts.uncategorized++;
     plan.rows.push({

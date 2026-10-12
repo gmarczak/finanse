@@ -38,6 +38,7 @@ export function suggestCategory(
   kind: "expense" | "income",
   rules: CategoryRule[],
   categories: Category[],
+  options: { builtIn?: boolean } = {},
 ): { categoryId: string; source: "rule" | "built-in" } | null {
   const text = ` ${normalizeMerchant(description)} `;
   const valid = new Map(categories.filter((c) => c.kind === kind && c.archivedAt === null).map((c) => [c.id, c]));
@@ -45,7 +46,7 @@ export function suggestCategory(
     .filter((r) => valid.has(r.categoryId) && text.includes(r.pattern))
     .sort((a, b) => b.pattern.length - a.pattern.length)[0];
   if (rule) return { categoryId: rule.categoryId, source: "rule" };
-  if (kind !== "expense") return null;
+  if (kind !== "expense" || options.builtIn === false) return null;
   for (const [name, keywords] of Object.entries(BUILT_IN)) {
     const category = [...valid.values()].find((c) => c.name === name);
     if (category && keywords.some((k) => text.includes(k))) return { categoryId: category.id, source: "built-in" };

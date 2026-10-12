@@ -69,6 +69,9 @@ describe("kategorie", () => {
     expect(suggestCategory("Biedronka 123", "expense", [], categories)).toEqual({ categoryId: "food", source: "built-in" });
     expect(suggestCategory("jakdojade.pl", "expense", [], categories)).toEqual({ categoryId: "transport", source: "built-in" });
     expect(suggestCategory("Coś nowego", "expense", [], categories)).toBeNull();
+    // bankomat: bez wbudowanych podpowiedzi, ale z regułą użytkownika
+    expect(suggestCategory("Cash withdrawal at Biedronka", "expense", [], categories, { builtIn: false })).toBeNull();
+    expect(suggestCategory("Cash withdrawal at Biedronka", "expense", [{ pattern: "cash withdrawal", categoryId: "fun" }], categories, { builtIn: false })).toEqual({ categoryId: "fun", source: "rule" });
   });
 });
 
