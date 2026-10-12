@@ -95,6 +95,9 @@ describe("plan importu", () => {
     expect(byDesc["Bankomat (Przykładowa 1)"]!.categoryId).toBeNull();
     expect(byDesc["Eneba"]).toMatchObject({ kind: "expense", amountMinor: 420 }); // zwrot zmniejsza wydatki
     expect(plannedCount(plan)).toBe(10);
+    // z kategorią „Bankomat” wypłata trafia do niej sama
+    const withAtm = buildImportPlan({ statement: parseRevolut(fixture), choices, accounts, categories: [...categories, cat("atm", "Bankomat")], transactions: [], rules: [], newId });
+    expect(withAtm.rows.find((r) => r.description === "Bankomat (Przykładowa 1)")!.categoryId).toBe("atm");
   });
 
   it("drugi import tego samego pliku nic nie dodaje; odrzucone połączenie daje osobny wiersz", () => {
