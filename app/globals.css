@@ -41,33 +41,33 @@
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --bg: #18191b;
-    --surface: #26282b;
-    --border: #313336;
+    --bg: #25272b;
+    --surface: #303237;
+    --border: #3c3f44;
     --text: #ecedee;
     --muted: #9da0a6;
     --done-text: #c9cbce;
     --accent: #7eb3e3;
     --accent-contrast: #0f1e2d;
-    --control: #55585d;
-    --dot-off: #3e4044;
+    --control: #666970;
+    --dot-off: #474a50;
     --danger: #ff9a8a;
     --warn: #e2b06a;
     --warn-text: #e2b06a;
 
-    --c-green-bg: #1e2a24;
+    --c-green-bg: #2a3830;
     --c-green-fg: #8ccba6;
-    --c-blue-bg: #1d2833;
+    --c-blue-bg: #29353f;
     --c-blue-fg: #8ec1dc;
-    --c-violet-bg: #262233;
+    --c-violet-bg: #332e42;
     --c-violet-fg: #bfa9e0;
-    --c-amber-bg: #2e2619;
+    --c-amber-bg: #3b3324;
     --c-amber-fg: #e2b06a;
-    --c-rose-bg: #2f1f22;
+    --c-rose-bg: #3d2a2e;
     --c-rose-fg: #e8a0aa;
-    --c-teal-bg: #1a2b2a;
+    --c-teal-bg: #263837;
     --c-teal-fg: #7fcfc6;
-    --c-slate-bg: #26282b;
+    --c-slate-bg: #34363b;
     --c-slate-fg: #b7babf;
   }
 }
