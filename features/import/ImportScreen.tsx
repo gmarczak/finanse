@@ -28,6 +28,7 @@ const pick = (accounts: Account[], test: (a: Account) => boolean) => accounts.fi
 
 // Zapamiętane przypisania osób z przelewów (np. „Grzegorz Marczak” → Pekao), tylko na tym urządzeniu
 const PEOPLE_KEY = "finanse-import-people";
+const REVOLUT_INVEST_NAMES = ["Konto inwestycyjne Revolut", "Robo Portfolio"];
 function readPeople(): Record<string, string | null> {
   try {
     return JSON.parse(localStorage.getItem(PEOPLE_KEY) ?? "{}") as Record<string, string | null>;
@@ -75,8 +76,14 @@ export function ImportScreen() {
     const accountId = (isSavings ? savings : main) ?? (isSavings ? "" : (accounts[0]?.id ?? ""));
     const otherBanks = accounts.filter((a) => a.kind === "bank" && a.id !== accountId);
     const remembered = readPeople();
+    // Inwestycje w Revolucie (akcje, złoto, dawny robo-doradca) domyślnie trafiają na konto inwestycyjne Revoluta, jeśli jest
+    const revolutInvest = pick(accounts, (a) => a.institution === "revolut" && a.kind === "broker");
     const people = Object.fromEntries(
-      counterpartiesOf(statement).map(({ name }) => [name, remembered[name] && accounts.some((a) => a.id === remembered[name]) ? remembered[name]! : null]),
+      counterpartiesOf(statement).map(({ name }) => {
+        const saved = remembered[name];
+        if (saved && accounts.some((a) => a.id === saved)) return [name, saved];
+        return [name, REVOLUT_INVEST_NAMES.includes(name) ? revolutInvest : null];
+      }),
     );
     return {
       accountId,
