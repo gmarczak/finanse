@@ -8,7 +8,8 @@ export type ImportChoices = {
   accountId: string; // konto, którego dotyczy wyciąg
   ownAccountId: string | null; // drugie konto w tym samym banku (konto ↔ oszczędności); null = pomiń te wiersze
   counterparties: Record<string, string | null>; // przelew do/od osoby: Twoje konto (przelew) albo null (wydatek/przychód)
-  includeExchange: boolean; // wymiana walut: domyślnie pomijana (to Twoje pieniądze z innej waluty)
+  /** Wymiana walut na złotówki: "skip" (domyślnie — to Twoje pieniądze z innej waluty), "income" albo id konta, z którego przyszły (np. zamknięty robo-doradca) */
+  exchangeFrom: string;
   brokerAccountIds: Record<string, string | null>; // np. { xtb: "<id XTB>" } (null = traktuj jako wydatek)
   topupFrom: string | "income"; // doładowania z innego banku: z którego konta, albo przychód
   rejectedMerges: string[]; // odciski wierszy, których NIE łączyć z ręcznym wpisem
@@ -137,7 +138,7 @@ export function buildImportPlan(input: {
       continue;
     }
     const hint = row.hint;
-    if (hint.type === "exchange" && !choices.includeExchange) {
+    if (hint.type === "exchange" && choices.exchangeFrom === "skip") {
       plan.skipped.exchange++;
       continue;
     }
@@ -159,9 +160,15 @@ export function buildImportPlan(input: {
       continue;
     }
     const counterpartAccount = hint.type === "counterparty" ? (choices.counterparties[hint.name] ?? null) : null;
-    const isTransferLike = hint.type === "own-transfer" || hint.type === "broker" || hint.type === "topup" || counterpartAccount !== null;
+    const exchangeAccount = hint.type === "exchange" && choices.exchangeFrom !== "income" ? choices.exchangeFrom : null;
+    const isTransferLike = hint.type === "own-transfer" || hint.type === "broker" || hint.type === "topup" || counterpartAccount !== null || exchangeAccount !== null;
     if (isTransferLike && existingLeg(row)) {
       plan.duplicates++;
+      continue;
+    }
+    if (exchangeAccount) {
+      transfer(row, exchangeAccount);
+      plan.counts.counterparties++;
       continue;
     }
     if (counterpartAccount) {

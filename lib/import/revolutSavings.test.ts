@@ -59,7 +59,7 @@ describe("plan importu oszczędności i osób", () => {
   const newId = () => `id-${++n}`;
   const categories = [cat("int", "Odsetki", "income"), cat("other", "Inne przychody", "income")];
   const accounts = [acc("rev", "Revolut"), acc("sav", "Revolut Oszczędności"), acc("pekao", "Pekao")];
-  const choices: ImportChoices = { accountId: "sav", ownAccountId: "rev", counterparties: {}, includeExchange: false, brokerAccountIds: {}, topupFrom: "income", rejectedMerges: [] };
+  const choices: ImportChoices = { accountId: "sav", ownAccountId: "rev", counterparties: {}, exchangeFrom: "skip", brokerAccountIds: {}, topupFrom: "income", rejectedMerges: [] };
 
   it("odsetki jako przychód w kategorii Odsetki; ponowny import z większą kwotą aktualizuje ten sam wiersz", () => {
     const first = buildImportPlan({ statement: parseRevolutSavings(fixture), choices, accounts, categories, transactions: [], rules: [], newId });
@@ -92,7 +92,9 @@ describe("plan importu oszczędności i osób", () => {
     expect(plan.transfers.map((t) => t.legs.map((l) => [l.accountId, l.amountMinor]))).toEqual([[["rev", -50000], ["pekao", 50000]]]);
     expect(plan.rows.map((r) => [r.kind, r.amountMinor])).toEqual([["expense", -2000]]);
     expect(plan.skipped.exchange).toBe(1);
-    const withExchange = buildImportPlan({ statement, choices: { ...choices, accountId: "rev", includeExchange: true }, accounts, categories, transactions: [], rules: [], newId });
+    const withExchange = buildImportPlan({ statement, choices: { ...choices, accountId: "rev", exchangeFrom: "income" }, accounts, categories, transactions: [], rules: [], newId });
     expect(withExchange.rows.find((r) => r.amountMinor === 9000)?.kind).toBe("income");
+    const fromInvest = buildImportPlan({ statement, choices: { ...choices, accountId: "rev", exchangeFrom: "sav" }, accounts, categories, transactions: [], rules: [], newId });
+    expect(fromInvest.transfers.find((t) => t.legs[0]!.amountMinor === 9000)?.legs.map((l) => [l.accountId, l.amountMinor])).toEqual([["rev", 9000], ["sav", -9000]]);
   });
 });

@@ -75,7 +75,7 @@ describe("kategorie", () => {
 describe("plan importu", () => {
   let n = 0;
   const newId = () => `id-${++n}`;
-  const choices: ImportChoices = { accountId: "rev", ownAccountId: "sav", counterparties: {}, includeExchange: false, brokerAccountIds: { xtb: "xtb" }, topupFrom: "pekao", rejectedMerges: [] };
+  const choices: ImportChoices = { accountId: "rev", ownAccountId: "sav", counterparties: {}, exchangeFrom: "skip", brokerAccountIds: { xtb: "xtb" }, topupFrom: "pekao", rejectedMerges: [] };
   const manual: Transaction = {
     id: "m1", accountId: "rev", bookedOn: "2026-04-02", kind: "expense", amountMinor: -3000, currency: "PLN", amountPlnMinor: -3000,
     categoryId: "fun", description: "Kino z Olą", bankDescription: null, note: null, source: "manual", transferId: null, fingerprint: null, createdAt: "",

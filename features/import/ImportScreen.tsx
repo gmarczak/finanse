@@ -89,7 +89,7 @@ export function ImportScreen() {
       accountId,
       ownAccountId: isSavings ? main : savings,
       counterparties: people,
-      includeExchange: false,
+      exchangeFrom: "skip",
       brokerAccountIds: { xtb: pick(accounts, (a) => a.institution === "xtb") },
       topupFrom: otherBanks.length === 1 ? otherBanks[0]!.id : "income",
       rejectedMerges: [],
@@ -307,9 +307,20 @@ export function ImportScreen() {
               )}
 
               {hasHint("exchange") && (
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={choices.includeExchange} onChange={(e) => set({ includeExchange: e.target.checked })} className="h-[18px] w-[18px] accent-[var(--accent)]" />
-                  Licz wymianę walut na złotówki jako przychód (domyślnie pomijana — to Twoje pieniądze z innej waluty)
+                <label className={label}>
+                  <span className={labelText}>Wymiana walut na złotówki ({loaded.statement.rows.filter((r) => r.hint.type === "exchange").length})</span>
+                  <select value={choices.exchangeFrom} onChange={(e) => set({ exchangeFrom: e.target.value })} className={field}>
+                    <option value="skip">Pomiń (moje pieniądze z innej waluty)</option>
+                    <option value="income">Licz jako przychód</option>
+                    {accounts
+                      .filter((a) => a.id !== choices.accountId)
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          Przelew z: {a.name}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="text-xs text-muted">Np. pieniądze wypłacone z robo-doradcy albo ze sprzedaży akcji — wybierz konto, z którego przyszły.</span>
                 </label>
               )}
 
