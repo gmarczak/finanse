@@ -71,6 +71,15 @@ export function buildImportPlan(input: {
 }): ImportPlan {
   const { statement, choices, categories, transactions, rules, newId } = input;
   const existing = new Set(transactions.filter((t) => t.accountId === choices.accountId && t.fingerprint).map((t) => t.fingerprint));
+  // Przelewy między własnymi kontami są w wyciągach obu kont. Jeśli noga już jest na tym koncie
+  // (np. z importu drugiego konta), wiersz jest duplikatem: ta sama kwota, data ±1 dzień.
+  const transferLegs = transactions.filter((t) => t.accountId === choices.accountId && t.kind === "transfer");
+  const usedLegs = new Set<string>();
+  const existingLeg = (row: StatementRow) => {
+    const leg = transferLegs.find((t) => !usedLegs.has(t.id) && t.amountMinor === row.amountMinor && Math.abs(diffDays(t.bookedOn, row.bookedOn)) <= 1);
+    if (leg) usedLegs.add(leg.id);
+    return leg !== undefined;
+  };
   const plan: ImportPlan = {
     rows: [],
     transfers: [],
@@ -103,6 +112,11 @@ export function buildImportPlan(input: {
       continue;
     }
     const hint = row.hint;
+    const isTransferLike = hint.type === "own-transfer" || hint.type === "broker" || hint.type === "topup";
+    if (isTransferLike && existingLeg(row)) {
+      plan.duplicates++;
+      continue;
+    }
     if (hint.type === "own-transfer") {
       if (choices.savingsAccountId) {
         transfer(row, choices.savingsAccountId);

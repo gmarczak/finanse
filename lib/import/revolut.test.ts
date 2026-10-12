@@ -107,6 +107,17 @@ describe("plan importu", () => {
     expect(rejected.rows.some((r) => r.description === "Kino Przykładowe")).toBe(true);
   });
 
+  it("przelew z oszczędnościami z wyciągu drugiego konta nie wchodzi drugi raz", () => {
+    const first = buildImportPlan({ statement: parseRevolut(fixture), choices, accounts, categories, transactions: [], rules: [], newId });
+    // nogi zapisane na koncie oszczędności po imporcie konta głównego
+    const legs: Transaction[] = first.transfers.flatMap((t) => t.legs.map((l) => ({ ...manual, id: l.id, accountId: l.accountId, kind: "transfer" as const, amountMinor: l.amountMinor, amountPlnMinor: l.amountMinor, bookedOn: t.bookedOn, transferId: t.transferId, source: "import" as const, fingerprint: l.fingerprint })));
+    // wyciąg oszczędności: te same przelewy widziane z drugiej strony (inny odcisk, przeciwny znak)
+    const savings = { ...parseRevolut(fixture), rows: parseRevolut(fixture).rows.filter((r) => r.hint.type === "own-transfer").map((r) => ({ ...r, amountMinor: -r.amountMinor, fingerprint: `${r.fingerprint}:sav`, hint: { type: "own-transfer" as const, product: "current" as const, direction: r.amountMinor < 0 ? ("in" as const) : ("out" as const) } })) };
+    const plan = buildImportPlan({ statement: savings, choices: { ...choices, accountId: "sav", savingsAccountId: "rev" }, accounts, categories, transactions: legs, rules: [], newId });
+    expect(plan.transfers).toHaveLength(0);
+    expect(plan.duplicates).toBe(2);
+  });
+
   it("bez konta oszczędności te wiersze są pomijane, doładowanie może być przychodem", () => {
     const plan = buildImportPlan({ statement: parseRevolut(fixture), choices: { ...choices, savingsAccountId: null, topupFrom: "income" }, accounts, categories, transactions: [], rules: [], newId });
     expect(plan.skipped.ownTransfersWithoutAccount).toBe(2);
